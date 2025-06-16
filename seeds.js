@@ -795,7 +795,7 @@ const questionsData_80_plus = [
   {
     question_number: 1,
     questionText: "Are you retired?",
-    type: 'question',
+    type: 'option',
     options: [
       { label: 'Yes, not working', comment: 'Wonderful! Let’s focus on maximizing income and minimizing stress.' },
       { label: 'No, working full-time', comment: 'Let’s prepare your retirement timeline and secure your financial future.' },
@@ -805,7 +805,7 @@ const questionsData_80_plus = [
   {
     question_number: 2,
     questionText: "Where do you currently live? Please be as specific as possible (Address, Zip Code, Neighborhood, City, or State)",
-    type: 'statement',
+    type: 'text',
     options: [
          { label: '(Free Text)', comment: 'This helps tailor advice based on cost of living, taxes, and healthcare access in your area.' },
     ],
@@ -813,7 +813,7 @@ const questionsData_80_plus = [
   {
     question_number: 3,
     questionText: "Do you own or rent?",
-    type: 'question',
+    type: 'option',
     options: [
       { label: 'Own', comment: 'Owning a home gives you equity options in retirement planning.' },
       { label: 'Rent', comment: 'Renting offers flexibility—let’s look for affordable retirement locations.' },
