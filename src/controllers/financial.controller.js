@@ -1,15 +1,16 @@
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
-const { 
-  uploadFinancialAdvisorData, 
-  getFinancialAdvisors, 
+const {
+  uploadFinancialAdvisorData,
+  getFinancialAdvisors,
   processFinancialReferenceExcel,
   calculateRetirementProjection,
-  parseAndInsertZipCodes ,
+  parseAndInsertZipCodes,
   processLifestyleExcelRows,
-  calculateComfortMean
- } = require('../services/financial.service');
+  calculateComfortMean,
+  getLifestyleDetails
+} = require('../services/financial.service');
 const { errorResponse, successResponse } = require('../utils/responseHandler.util');
 const resMessages = require('../constants/resMessages.constants');
 
@@ -92,28 +93,65 @@ exports.uploadFinancialReference = async (req, res) => {
 };
 
 
-exports.calculateCanRetireAt67 =async (req, res) => {
+exports.calculateCanRetireAt67 = async (req, res) => {
   try {
     const details = req.body.details;
 
     const result = await calculateRetirementProjection(details.userRangeAnswers);
+
     const questionKey = "Where do you currently live? Please enter your zip code";
     const zipCode = details.userAnswers[questionKey];
 
-    const getComfortMean = await calculateComfortMean(zipCode)
+    const getComfortMean = await calculateComfortMean(zipCode);
+    const lifestyleDetails = await getLifestyleDetails(zipCode);
 
-    console.log("getConfor---",getComfortMean)
-    console.log("saveret --",result.projectedRetirementValue)
+    const SAVERET = result.projectedRetirementValue;
+    const medianLifestyle = lifestyleDetails.medianLifestyle;
+    const RETIREMENT_YEARS = 20;
 
-    let canRetireAt67 = result.projectedRetirementValue>=getComfortMean? "Yes" :  "No"
-   
-    let data = {
-      projectedSaving:result.projectedRetirementValue,
-      savingRequired:getComfortMean,
-      savingDefecit:(result.projectedRetirementValue) - getComfortMean,
-      canRetireAt67:canRetireAt67
-    }
+    // Step 1: Can retire at 67
+    const canRetireAt67 = SAVERET >= getComfortMean ? "Yes" : "No";
 
+    // Step 2: How long money lasts
+    const SAVELAST = parseFloat((SAVERET / medianLifestyle).toFixed(1));
+    const DELTA = parseFloat((RETIREMENT_YEARS - SAVELAST).toFixed(1));
+
+    const retirementMessage = SAVELAST >= RETIREMENT_YEARS
+      ? 'Good job! You’re on track for retirement.'
+      : `Get on track now — your savings may fall short by approximately ${DELTA} year${DELTA !== 1 ? 's' : ''}.`;
+
+    // Step 3: Can retire today
+    const DELTA1 = parseFloat((medianLifestyle - SAVERET).toFixed(2));
+    const canRetireToday = DELTA1 <= 0 ? "YES" : "NO";
+    const retireTodayMessage = DELTA1 <= 0
+      ? 'YES — you can afford to retire today.'
+      : `NO — you need approximately $${Math.abs(DELTA1).toLocaleString()} more to retire comfortably.`;
+
+    // Final structured response
+    const data = {
+      canRetireAt67: {
+        "Can I retire at 67?": canRetireAt67,
+        "Your Projected Savings at 67": SAVERET,
+        "Savings Required at 67": getComfortMean,
+        "Savings Deficit / Surplus": parseFloat((SAVERET - getComfortMean).toFixed(2))
+      },
+      savingRequiredAt67: {
+        "For Budget LifeStyle": lifestyleDetails.budget.mean,
+        "For Comfortable Lifestyle": lifestyleDetails.comfort.mean,
+        "For Luxury Lifestyle": lifestyleDetails.luxury.mean
+      },
+      howLongMoneyLast: {
+        "How Long will my money last?": SAVELAST,
+        "Years Extra": DELTA,
+        "Message": retirementMessage
+      },
+      canIRetireToday: {
+        "Can I Retire Today?": canRetireToday,
+        "Savings Today": SAVERET,
+        "Amount Needed to Retire Today": medianLifestyle,
+        "Message": retireTodayMessage
+      }
+    };
 
     return res.status(200).json({
       success: true,
@@ -130,6 +168,8 @@ exports.calculateCanRetireAt67 =async (req, res) => {
     });
   }
 };
+
+
 
 
 
@@ -153,7 +193,7 @@ exports.uploadZipCodes = async (req, res) => {
 
     await parseAndInsertZipCodes(filePath);
 
-     fs.unlinkSync(filePath);
+    fs.unlinkSync(filePath);
 
     res.status(200).json({ success: true, message: 'Zip codes uploaded successfully' });
   } catch (error) {

@@ -218,3 +218,26 @@ exports.calculateComfortMean = async(zipcode)=>{
 }
 
 
+exports.getLifestyleDetails = async(zipcode)=>{
+  try{
+  if(!zipcode){
+    throw "No zip code received"
+  }
+  const zipCode = await ZipCodeLocation.findOne({zipCode:zipcode})
+  if(!zipCode){
+    throw  "Zip code not found"
+  }
+
+  let getComMean = await StateLifestyle.findOne({state:zipCode.state})
+
+  return getComMean
+
+  }catch(error){
+    throw error
+  }
+}
+
+
+
+
+
