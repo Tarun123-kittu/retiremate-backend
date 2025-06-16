@@ -9,7 +9,7 @@ const OptionSchema = new mongoose.Schema({
 const QuestionSchema = new mongoose.Schema({
   quiz_no:{type:Number},
   questionText: { type: String},
-  type: { type: String, enum: ['question', 'statement'], default: 'question' },
+  type: { type: String, enum: ['option', 'text','range'], default: 'option' },
   options: [OptionSchema],
   system_greetings: [String] 
 

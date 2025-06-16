@@ -8,7 +8,7 @@ const OptionSchema = new mongoose.Schema({
 const QuestionSchema = new mongoose.Schema({
     question_number: { type: Number },
     questionText: { type: String },
-    type: { type: String, enum: ['question', 'statement'], default: 'question' },
+    type: { type: String, enum: ['option', 'text','range'], default: 'option' },
     options: [OptionSchema]
 }, { _id: false });
 

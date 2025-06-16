@@ -4,13 +4,15 @@ const QuestionsByAgeGroupModel = require("../models/questions-byAgeGroup.model")
 
 exports.processExcelFile = async (data) => {
   try {
-      const questionsMap = {};
-      const pendingStatements = {};
-      for (const row of data) {
+    const questionsMap = {};
+    const pendingStatements = {};
+
+    for (const row of data) {
       const qid = row['Q#']?.trim();
       const questionText = row['Question']?.trim();
       const optionLabel = row['Option']?.trim();
       const comment = row['Comment']?.trim();
+      const typeColumn = row['Type']?.trim().toLowerCase(); 
 
       if (!qid || !questionText) continue;
 
@@ -28,37 +30,41 @@ exports.processExcelFile = async (data) => {
 
       } else if (qid.startsWith('Q')) {
         const qNum = qid.match(/\d+/)?.[0];
-        const isFreeText = optionLabel?.includes('(Free Text)');
+
+  
+        let type = 'option';
+        if (typeColumn === 'range') type = 'range';
+        else if (typeColumn === 'text') type = 'text';
+      
 
         if (!questionsMap[qid]) {
-            questionsMap[qid] = {
+          questionsMap[qid] = {
             quiz_no: qNum,
             questionText,
             options: [],
-            type: isFreeText ? 'statement' : 'question',
+            type, 
             system_greeting: pendingStatements[qNum] || []
           };
         }
 
-        if (isFreeText) {
-          questionsMap[qid].type = 'statement';
-        }
 
         if (optionLabel || comment) {
-            questionsMap[qid].options.push({
+          questionsMap[qid].options.push({
             value: optionLabel.replace(/[\s-]+/g, '_').toLowerCase(),
             label: optionLabel,
             comment: comment || ''
           });
-        }}
+        }
+      }
     }
-     return questionsMap
+    return questionsMap;
 
   } catch (error) {
-    console.log("ERROR::", error)
+    console.log("ERROR::", error);
     throw new Error(error.message || 'Failed to process excel file.');
   }
-}
+};
+
 
 
 exports.processVendorFile = async (questionsMap) => {
@@ -66,12 +72,12 @@ exports.processVendorFile = async (questionsMap) => {
       const newOptionValues = new Set();
       await primeQuestionsModel.deleteMany();
       for (const key of Object.keys(questionsMap)) {
-      const { questionText, options, quiz_no, system_greeting } =
+      const { questionText, options, quiz_no, system_greeting ,type} =
       questionsMap[key];
 
       const existingQuestion = await primeQuestionsModel.findOne({
       questionText,
-      type: "question",
+      type: type,
       });
       if (existingQuestion) {
         const newOptionsJSON = JSON.stringify(options);
@@ -83,7 +89,7 @@ exports.processVendorFile = async (questionsMap) => {
       } else {
         await primeQuestionsModel.create({
         questionText,
-        type: "question",
+        type: type,
         options,
         quiz_no,
         system_greetings: system_greeting,
@@ -116,7 +122,7 @@ exports.processVendorFile = async (questionsMap) => {
 
 exports.processValueFile = async (value, questionsMap) => {
 
-  const allQuestions = await primeQuestionsModel.find({ type: "question" });
+  const allQuestions = await primeQuestionsModel.find();
 
   const validValues = new Set();
   for (const q of allQuestions) {
