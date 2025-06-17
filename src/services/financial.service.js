@@ -1,12 +1,13 @@
 const XLSX = require('xlsx');
+const path = require('path');
 const FinancialAdvisor = require('../models/financial-advisors.model');
-const FinancialReferenceModel = require('../models/financial-reference.model')
+const FinancialReferenceModel = require('../models/financial-reference.model');
 
-const { getValueForCalculation } = require('../utils/surveyRange.util');
 const csv = require('csv-parser');
 const fs = require('fs');
 const ZipCodeLocation = require('../models/zipcode-locations.mode');
 const StateLifestyle = require('../models/retirementLifestylecost.model');
+const SurveyRangeValue = require('../models/survey-range.model');
 
 
 exports.uploadFinancialAdvisorData = async (filePath, fileNo) => {
@@ -80,7 +81,7 @@ exports.processFinancialReferenceExcel = async (rows) => {
     const value = row['Value'];
 
     if (field && typeof value !== 'undefined') {
-      dataToInsert[field] = Number(value); 
+      dataToInsert[field] = Number(value);
     }
   }
 
@@ -89,44 +90,82 @@ exports.processFinancialReferenceExcel = async (rows) => {
   await FinancialReferenceModel.create(dataToInsert);
 };
 
+const getValueForCalculation = async (questionText, inputValue) => {
+  const range = await SurveyRangeValue.findOne({
+    questionText,
+    min: { $lte: inputValue },
+    max: { $gte: inputValue }
+  });
+
+  return range ? range.valueForCalculation : null;
+};
 
 
+exports.calculateRetirementProjection = async (userAnswers) => {
+  try {
+    const financialReferences = await FinancialReferenceModel.findOne({ document: "financial_reference" });
 
-exports.calculateRetirementProjection = async (userAnswers)=> {
-  const retirementAge = 67;
-  const SVGGRATE = 0.10;   
-  const SALGRATE = 0.025;  
-  const SAVERATE = 0.10;  
+    if (!financialReferences) {
+      throw new Error("Financial reference data not found in the database.");
+    }
 
-  const currentAge = getValueForCalculation("How old are you?", userAnswers["How old are you?"]);
-  const currentSalary = getValueForCalculation("How much do you make in a year ?", userAnswers["How much do you make in a year ?"]);
-  const currentSavings = getValueForCalculation("How much have you saved for retirement so far?", userAnswers["How much have you saved for retirement so far?"]);
+    const retirementAge = financialReferences.retirement_age;
+    const SVGGRATE = financialReferences.saving_growth_rate_percent / 100;
+    const SALGRATE = financialReferences.salary_growth_rate_percent / 100;
+    const SAVERATE = financialReferences.annual_saving_rate_percent / 100;
 
-  if (currentAge === null || currentSalary === null || currentSavings === null) {
-    throw new Error("Missing or invalid inputs for age, salary, or savings.");
+
+    const currentAge = await getValueForCalculation("How old are you?", userAnswers["How old are you?"]);
+    const currentSalary = await getValueForCalculation("How much do you make in a year ?", userAnswers["How much do you make in a year ?"]);
+    const currentSavings = await getValueForCalculation("How much have you saved for retirement so far?", userAnswers["How much have you saved for retirement so far?"]);
+
+
+    if (currentAge === null || currentSalary === null || currentSavings === null) {
+      throw new Error("Missing or invalid inputs for age, salary, or savings.");
+    }
+
+    const n = retirementAge - currentAge;
+
+    if (n <= 0) {
+      throw new Error("Current age must be less than retirement age.");
+    }
+
+    const futureSavings = currentSavings * Math.pow(1 + SVGGRATE, n);
+
+    let futureContributions = 0;
+    for (let t = 0; t < n; t++) {
+      const salaryAtT = currentSalary * Math.pow(1 + SALGRATE, t);
+      const contribution = salaryAtT * SAVERATE;
+      const growth = Math.pow(1 + SVGGRATE, n - t - 1);
+      futureContributions += contribution * growth;
+    }
+
+    const totalRetirementValue = Math.round(futureSavings + futureContributions);
+
+    console.log({
+      retirementAge,
+      currentAge,
+      n,
+      currentSalary,
+      currentSavings,
+      SVGGRATE,
+      SALGRATE,
+      SAVERATE,
+      futureSavings: futureSavings.toFixed(2),
+      futureContributions: futureContributions.toFixed(2),
+      totalRetirementValue
+    });
+    return {
+      currentAge,
+      currentSalary,
+      currentSavings,
+      projectedRetirementValue: totalRetirementValue
+    };
+  } catch (error) {
+    console.error("Error calculating retirement projection:", error.message);
+    throw new Error(`Retirement projection calculation failed: ${error.message}`);
   }
-
-  const n = retirementAge - currentAge;
-
-  const futureSavings = currentSavings * Math.pow(1 + SVGGRATE, n);
-
-  let futureContributions = 0;
-  for (let t = 0; t < n; t++) {
-    const salaryAtT = currentSalary * Math.pow(1 + SALGRATE, t);
-    const contribution = salaryAtT * SAVERATE;
-    const growth = Math.pow(1 + SVGGRATE, n - t - 1);
-    futureContributions += contribution * growth;
-  }
-
-  const totalRetirementValue = Math.round(futureSavings + futureContributions);
-
-  return {
-    currentAge,
-    currentSalary,
-    currentSavings,
-    projectedRetirementValue: totalRetirementValue
-  };
-}
+};
 
 
 
@@ -161,7 +200,6 @@ exports.parseAndInsertZipCodes = async (filePath) => {
 };
 
 
-
 exports.processLifestyleExcelRows = async (rows) => {
   const formattedData = rows.map(row => {
     return {
@@ -185,7 +223,7 @@ exports.processLifestyleExcelRows = async (rows) => {
     };
   });
 
- 
+
   await StateLifestyle.deleteMany({});
   return await StateLifestyle.insertMany(formattedData);
 };
@@ -196,46 +234,78 @@ const parseCurrency = (str) => {
 };
 
 
+exports.calculateComfortMean = async (zipcode) => {
+  try {
+    if (!zipcode) {
+      throw new Error("No zip code received.");
+    }
 
+    const zipCodeDoc = await ZipCodeLocation.findOne({ zipCode: zipcode });
+    if (!zipCodeDoc) {
+      throw new Error(`Zip code ${zipcode} not found in database.`);
+    }
 
-exports.calculateComfortMean = async(zipcode)=>{
-  try{
-  if(!zipcode){
-    throw "No zip code received"
+    const lifestyle = await StateLifestyle.findOne({ state: zipCodeDoc.state });
+    if (!lifestyle || !lifestyle.comfort || typeof lifestyle.comfort.mean !== 'number') {
+      throw new Error(`Lifestyle data for state '${zipCodeDoc.state}' is incomplete or missing.`);
+    }
+
+    return lifestyle.comfort.mean;
+
+  } catch (error) {
+    throw new Error(`Error in calculateComfortMean: ${error.message}`);
   }
-  const zipCode = await ZipCodeLocation.findOne({zipCode:zipcode})
-  if(!zipCode){
-    throw  "Zip code not found"
+};
+
+
+
+exports.getLifestyleDetails = async (zipcode) => {
+  try {
+    if (!zipcode) {
+      throw new Error("No zip code received.");
+    }
+
+    const zipCodeDoc = await ZipCodeLocation.findOne({ zipCode: zipcode });
+    if (!zipCodeDoc) {
+      throw new Error(`Zip code ${zipcode} not found in database.`);
+    }
+
+    const lifestyle = await StateLifestyle.findOne({ state: zipCodeDoc.state });
+    if (!lifestyle) {
+      throw new Error(`Lifestyle data for state '${zipCodeDoc.state}' not found.`);
+    }
+
+    return lifestyle;
+
+  } catch (error) {
+    throw new Error(`Error in getLifestyleDetails: ${error.message}`);
   }
-
-  let getComMean = await StateLifestyle.findOne({state:zipCode.state})
-
-  return getComMean.comfort.mean
-
-  }catch(error){
-    throw error
-  }
-}
+};
 
 
-exports.getLifestyleDetails = async(zipcode)=>{
-  try{
-  if(!zipcode){
-    throw "No zip code received"
-  }
-  const zipCode = await ZipCodeLocation.findOne({zipCode:zipcode})
-  if(!zipCode){
-    throw  "Zip code not found"
-  }
 
-  let getComMean = await StateLifestyle.findOne({state:zipCode.state})
+exports.processSurveyRangeExcel = async (file, uploadDir) => {
+  const uploadPath = path.join(uploadDir, file.name);
+  await file.mv(uploadPath);
 
-  return getComMean
+  const workbook = XLSX.readFile(uploadPath);
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet);
 
-  }catch(error){
-    throw error
-  }
-}
+  const dataToInsert = rows.map(row => ({
+    questionText: row.Question,
+    min: parseFloat(row.Min === 'Infinity' ? Infinity : row.Min || 0),
+    max: parseFloat(row.max === 'Infinity' ? Infinity : row.max || 0),
+    valueForCalculation: Number(row['Calculation Value'])
+  }));
+
+  await SurveyRangeValue.deleteMany({});
+  await SurveyRangeValue.insertMany(dataToInsert);
+
+  fs.unlinkSync(uploadPath);
+};
+
+
 
 
 

@@ -9,7 +9,8 @@ const {
   parseAndInsertZipCodes,
   processLifestyleExcelRows,
   calculateComfortMean,
-  getLifestyleDetails
+  getLifestyleDetails,
+  processSurveyRangeExcel
 } = require('../services/financial.service');
 const { errorResponse, successResponse } = require('../utils/responseHandler.util');
 const resMessages = require('../constants/resMessages.constants');
@@ -93,7 +94,31 @@ exports.uploadFinancialReference = async (req, res) => {
 };
 
 
-exports.calculateCanRetireAt67 = async (req, res) => {
+exports.uploadSurveyRangeFile = async (req, res) => {
+  try {
+    const file = req.files?.file;
+    if (!file) { return res.status(400).json(errorResponse("No file uploaded.")); }
+
+    if (path.extname(file.name) !== '.xlsx') {
+      return res.status(400).json(errorResponse("Only .xlsx files are allowed."));
+    }
+
+    if (file.name.toLowerCase() !== 'surveyrangetovalue.xlsx') {
+      return res.status(400).json(errorResponse("Invalid filename. Only 'SurveyRangeToValue.xlsx' is allowed."));
+    }
+
+    await processSurveyRangeExcel(file, path.join(__dirname, '../uploads'));
+
+    return res.status(200).json(successResponse("File uploaded and data saved successfully."));
+
+  } catch (error) {
+    console.error("Upload Error:", error);
+    return res.status(500).json({ success: false, message: "Something went wrong.", error: error.message });
+  }
+};
+
+
+exports.calculateResultsLevel1 = async (req, res) => {
   try {
     const details = req.body.details;
 
@@ -108,11 +133,12 @@ exports.calculateCanRetireAt67 = async (req, res) => {
     const SAVERET = result.projectedRetirementValue;
     const medianLifestyle = lifestyleDetails.medianLifestyle;
     const RETIREMENT_YEARS = 20;
-
-    // Step 1: Can retire at 67
+  
+    //can retire at 67
     const canRetireAt67 = SAVERET >= getComfortMean ? "Yes" : "No";
+    
 
-    // Step 2: How long money lasts
+    //how long money last
     const SAVELAST = parseFloat((SAVERET / medianLifestyle).toFixed(1));
     const DELTA = parseFloat((RETIREMENT_YEARS - SAVELAST).toFixed(1));
 
@@ -120,12 +146,13 @@ exports.calculateCanRetireAt67 = async (req, res) => {
       ? 'Good job! You’re on track for retirement.'
       : `Get on track now — your savings may fall short by approximately ${DELTA} year${DELTA !== 1 ? 's' : ''}.`;
 
-    // Step 3: Can retire today
+    // Can retire today
     const DELTA1 = parseFloat((medianLifestyle - SAVERET).toFixed(2));
     const canRetireToday = DELTA1 <= 0 ? "YES" : "NO";
     const retireTodayMessage = DELTA1 <= 0
       ? 'YES — you can afford to retire today.'
       : `NO — you need approximately $${Math.abs(DELTA1).toLocaleString()} more to retire comfortably.`;
+
 
     // Final structured response
     const data = {
@@ -170,10 +197,6 @@ exports.calculateCanRetireAt67 = async (req, res) => {
 };
 
 
-
-
-
-
 exports.uploadZipCodes = async (req, res) => {
   try {
     const file = req.files?.file;
@@ -201,7 +224,6 @@ exports.uploadZipCodes = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server Error', error: error.message });
   }
 };
-
 
 
 
